@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"golang.org/x/net/proxy"
+	"golang.org/x/net/proxy" // "github.com/golang/net/proxy"
 
 	"github.com/armon/go-socks5"
 )
