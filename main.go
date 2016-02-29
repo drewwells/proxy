@@ -19,10 +19,17 @@ type opts struct {
 	resolver *res
 }
 
+func (o *opts) dump() {
+	for k, v := range o.resolver.names {
+		fmt.Println("k~>", k, "v~>", v)
+	}
+}
+
 func (o *opts) dialer(n, a string) (net.Conn, error) {
 	// port is bogus from this, lookup the port from the resolver
-	h, p, err := net.SplitHostPort(a)
-	fmt.Println("split", h, p)
+	h, notthisport, err := net.SplitHostPort(a)
+	_ = notthisport
+	fmt.Println("dialer", n, a)
 	if err != nil {
 		fmt.Println("failed to split hostport", a)
 	}
@@ -31,9 +38,9 @@ func (o *opts) dialer(n, a string) (net.Conn, error) {
 	// if err != nil {
 	// 	log.Fatal(err)
 	// }
-	fmt.Println("dialer lookup")
+
 	name := o.resolver.Lookup(h)
-	fmt.Println("reverse", h, name)
+	fmt.Println("reverse", h, "name", name)
 	if o.resolver.checkName(name) {
 		fmt.Println("proxying", n, a)
 		dialer, err := proxy.SOCKS5(n, a, nil, forward)
@@ -41,8 +48,13 @@ func (o *opts) dialer(n, a string) (net.Conn, error) {
 			fmt.Println("dialer error")
 			return nil, err
 		}
-
-		return dialer.Dial(n, a)
+		fmt.Println("dialing", n, name+":"+notthisport)
+		o.dump()
+		return forward.Dial(n, name+":"+notthisport)
+		// return dialer.Dial(n, a)
+		c, err := dialer.Dial(n, name)
+		fmt.Println(c, err)
+		return c, err
 	} else {
 		fmt.Println("direct", name)
 	}
@@ -94,9 +106,16 @@ type res struct {
 	rules []string
 	mu    sync.RWMutex
 	names map[string]net.Addr // host(ip:port) -> fqdn
+	cache map[string]struct{}
+}
+
+func (r *res) init() {
+	r.names = make(map[string]net.Addr)
+	r.cache = make(map[string]struct{})
 }
 
 func (r *res) Lookup(host string) string {
+	host = host + ":0"
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for k, v := range r.names {
@@ -118,10 +137,6 @@ func (r *res) checkName(name string) bool {
 	return false
 }
 
-func (r *res) init() {
-	r.names = make(map[string]net.Addr)
-}
-
 func ipFromAddr(addr net.Addr) net.IP {
 	switch v := addr.(type) {
 	case *net.IPAddr:
@@ -133,7 +148,33 @@ func ipFromAddr(addr net.Addr) net.IP {
 	}
 }
 
+var empty = net.IP{}
+
+var cMu sync.Mutex
+var counter = net.IP{0, 0, 0, 0}
+
+func getCounter() net.IP {
+	cMu.Lock()
+	inc()
+	n := net.IP{0, 0, 0, 0}
+	copy(n, counter)
+	cMu.Unlock()
+	return n
+}
+
+func inc() {
+	carry := true
+	fmt.Printf("% #v\n", counter)
+	for i := 3; carry; i-- {
+		if counter[i] < 254 {
+			carry = false
+		}
+		counter[i]++
+	}
+}
+
 func (r *res) Resolve(name string) (net.IP, error) {
+	fmt.Println("resolving", name)
 	r.mu.RLock()
 	addr, ok := r.names[name]
 	r.mu.RUnlock()
@@ -147,25 +188,23 @@ func (r *res) Resolve(name string) (net.IP, error) {
 	)
 	// Resolve this name with proxy
 	if r.checkName(name) {
-		h, p, err := net.SplitHostPort(name)
-		fmt.Println(h, p)
-		c, err := forward.Dial("tcp", name+":80")
-		if err != nil {
-			log.Fatal(err)
-		}
-		addr = c.LocalAddr()
-		ip = ipFromAddr(addr)
-		fmt.Printf("proxy found %s: % #v\n", ip, addr)
+		// Proxy is required to resolve this IP, pass a code
+		// so the dialer knows this requires resolution
+		ip = getCounter()
 	} else {
 		ip, err = r.def.Resolve(name)
 		if err != nil {
 			log.Fatal("failed to resolve addr", err)
 		}
 	}
+	addr = &net.TCPAddr{IP: ip}
 	r.mu.Lock()
 	fmt.Println("storing", name, addr)
 	r.names[name] = addr
 	r.mu.Unlock()
+	if err != nil {
+		log.Fatal("error in resolve", err)
+	}
 	// Builds a local cache of IP to address for use by the dialer
 	return ip, err
 }
