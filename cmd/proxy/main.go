@@ -18,12 +18,15 @@ type Config struct {
 	IP4InternalMTU     string
 	VPNFD              uintptr
 	IP4InternalDNS     []string
+	CiscoDefDomain     []string
 }
 
 func gatherenv() *Config {
 	cfg := &Config{}
 	cfg.IP4InternalAddress = os.Getenv("INTERNAL_IP4_ADDRESS")
 	cfg.IP4InternalMTU = os.Getenv("INTERNAL_IP4_MTU")
+	domains := os.Getenv("CISCO_DEF_DOMAIN")
+	cfg.CiscoDefDomain = strings.Split(domains, ", ")
 	dnses := os.Getenv("INTERNAL_IP4_DNS") // space sparated values
 	cfg.IP4InternalDNS = strings.Split(dnses, " ")
 
@@ -58,12 +61,17 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	log.Printf("conn % #v\n", conn)
-	n, err := conn.Write([]byte("hello"))
+	n, err := conn.Write([]byte("HEAD / HTTP/1.0\r\n\r\n"))
 	log.Println("write", n, err)
 
-	result, err := ioutil.ReadAll(conn)
-	log.Println("readall", err, result)
+	go func() {
+		for {
+			result, err := ioutil.ReadAll(conn)
+			log.Println("readall", err, result)
+		}
+	}()
 
 	// laddr, err := net.ResolveUnixAddr("unix", "")
 	// if err != nil {
