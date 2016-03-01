@@ -2,30 +2,29 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/url"
 	"os"
+	"os/user"
+	"path/filepath"
 	"strings"
 	"sync"
 
 	"golang.org/x/net/proxy" // "github.com/golang/net/proxy"
 
 	"github.com/armon/go-socks5"
+	"github.com/hashicorp/hcl"
 )
 
-type opts struct {
-	// these are contains filters ie. goo matches google.com or good.com
-	resolver *res
-}
-
-func (o *opts) dump() {
-	for k, v := range o.resolver.names {
+func (o *res) dump() {
+	for k, v := range o.names {
 		fmt.Println("k~>", k, "v~>", v)
 	}
 }
 
-func (o *opts) dialer(n, a string) (net.Conn, error) {
+func (o *res) dialer(n, a string) (net.Conn, error) {
 	// port is bogus from this, lookup the port from the resolver
 	h, notthisport, err := net.SplitHostPort(a)
 	_ = notthisport
@@ -39,22 +38,11 @@ func (o *opts) dialer(n, a string) (net.Conn, error) {
 	// 	log.Fatal(err)
 	// }
 
-	name := o.resolver.Lookup(h)
+	name := o.Lookup(h)
 	fmt.Println("reverse", h, "name", name)
-	if o.resolver.checkName(name) {
-		fmt.Println("proxying", n, a)
-		dialer, err := proxy.SOCKS5(n, a, nil, forward)
-		if err != nil {
-			fmt.Println("dialer error")
-			return nil, err
-		}
+	if o.checkName(name) {
 		fmt.Println("dialing", n, name+":"+notthisport)
-		o.dump()
 		return forward.Dial(n, name+":"+notthisport)
-		// return dialer.Dial(n, a)
-		c, err := dialer.Dial(n, name)
-		fmt.Println(c, err)
-		return c, err
 	} else {
 		fmt.Println("direct", name)
 	}
@@ -65,8 +53,31 @@ func (o *opts) dialer(n, a string) (net.Conn, error) {
 
 var forward proxy.Dialer
 
+// FileConfig defines the allowed parameters read from a file.
+type FileConfig struct {
+	Forward string   // addr of proxy aware socks5 server
+	Listen  string   // addr to listen on
+	Allow   []string // Slice of patterns to forward
+	// TODO: Disallow []string
+}
+
 func main() {
-	fURL, err := url.Parse("socks5://localhost:11080")
+	usr, err := user.Current()
+	if err != nil {
+		log.Fatal(err)
+	}
+	bs, err := ioutil.ReadFile(filepath.Join(usr.HomeDir, "proxy.cfg"))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	cfg := FileConfig{}
+	err = hcl.Decode(&cfg, string(bs))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fURL, err := url.Parse("socks5://" + cfg.Forward)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -75,17 +86,14 @@ func main() {
 		log.Fatal(err)
 	}
 	r := &res{
-		rules: []string{"oracle"},
+		rules: cfg.Allow,
 	}
 	r.init()
-	o := &opts{
-		resolver: r,
-	}
 
 	// Create a SOCKS5 server
 	conf := &socks5.Config{}
-	conf.Dial = o.dialer
-	conf.Resolver = o.resolver
+	conf.Dial = r.dialer
+	conf.Resolver = r
 	conf.Logger = log.New(os.Stderr, "", 0)
 
 	server, err := socks5.New(conf)
@@ -205,6 +213,5 @@ func (r *res) Resolve(name string) (net.IP, error) {
 	if err != nil {
 		log.Fatal("error in resolve", err)
 	}
-	// Builds a local cache of IP to address for use by the dialer
 	return ip, err
 }
