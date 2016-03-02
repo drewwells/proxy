@@ -102,7 +102,7 @@ func main() {
 	}
 
 	// Create SOCKS5 proxy on localhost port 8000
-	if err := server.ListenAndServe("tcp", "127.0.0.1:8000"); err != nil {
+	if err := server.ListenAndServe("tcp", cfg.Listen); err != nil {
 		panic(err)
 	}
 }
