@@ -1,34 +1,30 @@
-package main
+package socks
 
 import (
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net"
-	"net/url"
-	"os"
-	"os/user"
-	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/net/proxy" // "github.com/golang/net/proxy"
 
 	"github.com/armon/go-socks5"
-	"github.com/hashicorp/hcl"
 )
 
-func (o *res) dump() {
+const PATH = "/tmp/proxy.sock"
+
+func (o *Res) dump() {
 	for k, v := range o.names {
 		fmt.Println("k~>", k, "v~>", v)
 	}
 }
 
-func (o *res) dialer(n, a string) (net.Conn, error) {
+func (o *Res) Dialer(n, a string) (net.Conn, error) {
 	// port is bogus from this, lookup the port from the resolver
 	h, notthisport, err := net.SplitHostPort(a)
 	_ = notthisport
-	fmt.Println("dialer", n, a)
 	if err != nil {
 		fmt.Println("failed to split hostport", a)
 	}
@@ -39,19 +35,17 @@ func (o *res) dialer(n, a string) (net.Conn, error) {
 	// }
 
 	name := o.Lookup(h)
-	fmt.Println("reverse", h, "name", name)
 	if o.checkName(name) {
-		fmt.Println("dialing", n, name+":"+notthisport)
-		return forward.Dial(n, name+":"+notthisport)
+		// return o.conn, nil
+		// fmt.Println("proxy", name+":"+notthisport)
+		return o.forward.Dial(n, name+":"+notthisport)
 	} else {
-		fmt.Println("direct", name)
+		// fmt.Println("direct", name)
 	}
 
 	// Use standard resolver
 	return net.Dial(n, a)
 }
-
-var forward proxy.Dialer
 
 // FileConfig defines the allowed parameters read from a file.
 type FileConfig struct {
@@ -61,55 +55,12 @@ type FileConfig struct {
 	// TODO: Disallow []string
 }
 
-func main() {
-	usr, err := user.Current()
-	if err != nil {
-		log.Fatal(err)
-	}
-	bs, err := ioutil.ReadFile(filepath.Join(usr.HomeDir, "proxy.cfg"))
-	if err != nil {
-		log.Fatal(err)
-	}
+var _ socks5.NameResolver = &Res{}
 
-	cfg := FileConfig{}
-	err = hcl.Decode(&cfg, string(bs))
-	if err != nil {
-		log.Fatal(err)
-	}
+type Res struct {
+	conn    net.Conn
+	forward proxy.Dialer
 
-	fURL, err := url.Parse("socks5://" + cfg.Forward)
-	if err != nil {
-		log.Fatal(err)
-	}
-	forward, err = proxy.FromURL(fURL, proxy.Direct)
-	if err != nil {
-		log.Fatal(err)
-	}
-	r := &res{
-		rules: cfg.Allow,
-	}
-	r.init()
-
-	// Create a SOCKS5 server
-	conf := &socks5.Config{}
-	conf.Dial = r.dialer
-	conf.Resolver = r
-	conf.Logger = log.New(os.Stderr, "", 0)
-
-	server, err := socks5.New(conf)
-	if err != nil {
-		panic(err)
-	}
-
-	// Create SOCKS5 proxy on localhost port 8000
-	if err := server.ListenAndServe("tcp", cfg.Listen); err != nil {
-		panic(err)
-	}
-}
-
-var _ socks5.NameResolver = &res{}
-
-type res struct {
 	def   socks5.DNSResolver
 	rules []string
 	mu    sync.RWMutex
@@ -117,13 +68,34 @@ type res struct {
 	cache map[string]struct{}
 }
 
-func (r *res) init() {
-	r.names = make(map[string]net.Addr)
-	r.cache = make(map[string]struct{})
+func (r *Res) SetRules(rules []string) {
+	r.rules = rules
 }
 
-func (r *res) Lookup(host string) string {
+func (r *Res) SetConn(c net.Conn) {
+	r.conn = c
+}
+
+func (r *Res) SetForward(d proxy.Dialer) {
+	r.forward = d
+}
+
+func (r *Res) Init() {
+	r.names = make(map[string]net.Addr)
+	r.cache = make(map[string]struct{})
+	go func() {
+		for {
+			time.Sleep(time.Second * 30)
+			fmt.Printf("writes: %d\nreads:  %d\n", stored, lookup)
+		}
+	}()
+}
+
+var lookup int
+
+func (r *Res) Lookup(host string) string {
 	host = host + ":0"
+	lookup++
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for k, v := range r.names {
@@ -136,7 +108,7 @@ func (r *res) Lookup(host string) string {
 
 // checknames compares the resolved addresses against the
 // the whitelist of URLs
-func (r *res) checkName(name string) bool {
+func (r *Res) checkName(name string) bool {
 	for _, rule := range r.rules {
 		if strings.Contains(name, rule) {
 			return true
@@ -172,7 +144,6 @@ func getCounter() net.IP {
 
 func inc() {
 	carry := true
-	fmt.Printf("% #v\n", counter)
 	for i := 3; carry; i-- {
 		if counter[i] < 254 {
 			carry = false
@@ -181,8 +152,7 @@ func inc() {
 	}
 }
 
-func (r *res) Resolve(name string) (net.IP, error) {
-	fmt.Println("resolving", name)
+func (r *Res) Resolve(name string) (net.IP, error) {
 	r.mu.RLock()
 	addr, ok := r.names[name]
 	r.mu.RUnlock()
@@ -202,12 +172,13 @@ func (r *res) Resolve(name string) (net.IP, error) {
 	} else {
 		ip, err = r.def.Resolve(name)
 		if err != nil {
-			log.Fatal("failed to resolve addr", err)
+			log.Println("failed to resolve addr", err)
 		}
 	}
 	addr = &net.TCPAddr{IP: ip}
 	r.mu.Lock()
-	fmt.Println("storing", name, addr)
+	stored++
+	// fmt.Println("storing", name, addr)
 	r.names[name] = addr
 	r.mu.Unlock()
 	if err != nil {
@@ -215,3 +186,5 @@ func (r *res) Resolve(name string) (net.IP, error) {
 	}
 	return ip, err
 }
+
+var stored int
