@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net"
 	"os"
@@ -19,10 +18,12 @@ type Config struct {
 	VPNFD              uintptr
 	IP4InternalDNS     []string
 	CiscoDefDomain     []string
+	Reason             string
 }
 
 func gatherenv() *Config {
 	cfg := &Config{}
+	cfg.Reason = os.Getenv("reason")
 	cfg.IP4InternalAddress = os.Getenv("INTERNAL_IP4_ADDRESS")
 	cfg.IP4InternalMTU = os.Getenv("INTERNAL_IP4_MTU")
 	domains := os.Getenv("CISCO_DEF_DOMAIN")
@@ -31,11 +32,13 @@ func gatherenv() *Config {
 	cfg.IP4InternalDNS = strings.Split(dnses, " ")
 
 	svpnfd := os.Getenv("VPNFD")
-	ivpnfd, err := strconv.Atoi(svpnfd)
-	if err != nil {
-		log.Fatal("invalid fd", err)
+	if len(svpnfd) > 0 {
+		ivpnfd, err := strconv.Atoi(svpnfd)
+		if err != nil {
+			log.Fatal("invalid fd", err)
+		}
+		cfg.VPNFD = uintptr(ivpnfd)
 	}
-	cfg.VPNFD = uintptr(ivpnfd)
 	return cfg
 }
 
@@ -56,22 +59,24 @@ func main() {
 	// }
 	cfg := gatherenv()
 	fmt.Printf("% #v\n", cfg)
-	f := os.NewFile(cfg.VPNFD, "mysocket")
-	conn, err := net.FileConn(f)
-	if err != nil {
-		log.Fatal(err)
+	if cfg.VPNFD > 0 {
+		f := os.NewFile(cfg.VPNFD, "mysocket")
+		conn, err := net.FileConn(f)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 
-	log.Printf("conn % #v\n", conn)
-	n, err := conn.Write([]byte("HEAD / HTTP/1.0\r\n\r\n"))
-	log.Println("write", n, err)
+	// log.Printf("conn % #v\n", conn)
+	// n, err := conn.Write([]byte("HEAD / HTTP/1.0\r\n\r\n"))
+	// log.Println("write", n, err)
 
-	go func() {
-		for {
-			result, err := ioutil.ReadAll(conn)
-			log.Println("readall", err, result)
-		}
-	}()
+	// go func() {
+	// 	for {
+	// 		result, err := ioutil.ReadAll(conn)
+	// 		log.Println("readall", err, result)
+	// 	}
+	// }()
 
 	// laddr, err := net.ResolveUnixAddr("unix", "")
 	// if err != nil {

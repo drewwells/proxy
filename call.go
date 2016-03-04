@@ -15,20 +15,26 @@ type Config struct {
 	IP4InternalMTU     string
 	VPNFD              uintptr
 	IP4InternalDNS     []string
+	Reason             string
 }
 
-func gatherenv() *Config {
+func GatherEnv() *Config {
 	cfg := &Config{}
+	cfg.Reason = os.Getenv("reason")
 	cfg.IP4InternalAddress = os.Getenv("INTERNAL_IP4_ADDRESS")
 	cfg.IP4InternalMTU = os.Getenv("INTERNAL_IP4_MTU")
 	dnses := os.Getenv("INTERNAL_IP4_DNS") // space sparated values
-	cfg.IP4InternalDNS = strings.Split(dnses, " ")
+	if len(dnses) > 0 {
+		cfg.IP4InternalDNS = strings.Split(dnses, " ")
+	}
 
 	svpnfd := os.Getenv("VPNFD")
-	ivpnfd, err := strconv.Atoi(svpnfd)
-	if err != nil {
-		log.Fatal("invalid fd", err)
+	if len(svpnfd) > 0 {
+		ivpnfd, err := strconv.Atoi(svpnfd)
+		if err != nil {
+			log.Fatal("invalid fd", err)
+		}
+		cfg.VPNFD = uintptr(ivpnfd)
 	}
-	cfg.VPNFD = uintptr(ivpnfd)
 	return cfg
 }
