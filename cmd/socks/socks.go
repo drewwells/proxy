@@ -92,7 +92,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println(cfg.Listen)
+	fmt.Println("Listening on", cfg.Listen)
 	// Create SOCKS5 proxy on localhost port 8000
 	if err := server.ListenAndServe("tcp", cfg.Listen); err != nil {
 		panic(err)

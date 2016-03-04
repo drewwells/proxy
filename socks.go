@@ -147,33 +147,31 @@ func (o *Res) negSock(n, host, port string) (net.Conn, error) {
 }
 
 func (o *Res) Dialer(n, a string) (net.Conn, error) {
-	fmt.Println("dialing", n, a)
 	// port is bogus from this, lookup the port from the resolver
 	h, port, err := net.SplitHostPort(a)
 	if err != nil {
 		fmt.Println("failed to split hostport", a)
 	}
 	name := o.Lookup(h)
-	fmt.Println("host", h, "name", name)
+	// fmt.Println("dialing host", h, "name", name)
 	if o.checkName(name) { // route all traffic right now
 		// return o.negSock(n, name, port)
 		if o.conn != nil {
 			fmt.Println("conn not nil")
 			return o.conn, nil
 		}
-		fmt.Println("tcp forward")
+		// fmt.Println("tcp forward")
 		// return o.conn, nil
 		// fmt.Println("proxy", name+":"+notthisport)
 		return o.forward.Dial(n, name+":"+port)
 	}
-	fmt.Println("direct", name)
+	// fmt.Println("direct", name)
 
 	// Use standard resolver
 	return net.Dial(n, a)
 }
 
 func (r *Res) Resolve(name string) (net.IP, error) {
-	fmt.Println("resolve", name)
 	r.mu.RLock()
 	addr, ok := r.names[name]
 	r.mu.RUnlock()
@@ -187,7 +185,6 @@ func (r *Res) Resolve(name string) (net.IP, error) {
 	)
 	// Resolve this name with proxy
 	if r.checkName(name) {
-		fmt.Println("proxy resolve")
 		// Proxy is required to resolve this IP, pass a code
 		// so the dialer knows this requires resolution
 		ip = getCounter()
