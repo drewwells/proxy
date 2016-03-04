@@ -59,7 +59,7 @@ func (r *Res) Init() {
 	r.cache = make(map[string]struct{})
 	go func() {
 		for {
-			time.Sleep(time.Second * 30)
+			time.Sleep(time.Minute * 5)
 			fmt.Printf("writes: %d\nreads:  %d\n", stored, lookup)
 		}
 	}()
@@ -191,7 +191,7 @@ func (r *Res) Resolve(name string) (net.IP, error) {
 	} else {
 		ip, err = r.def.Resolve(name)
 		if err != nil {
-			log.Println("failed to resolve addr", err)
+			log.Printf("direct resolve failed on %s: %s", name, err)
 		}
 	}
 	addr = &net.TCPAddr{IP: ip}
@@ -200,9 +200,6 @@ func (r *Res) Resolve(name string) (net.IP, error) {
 	// fmt.Println("storing", name, addr)
 	r.names[name] = addr
 	r.mu.Unlock()
-	if err != nil {
-		log.Fatal("error in resolve", err)
-	}
 	return ip, err
 }
 
