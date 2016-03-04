@@ -5,45 +5,59 @@ import (
 	"log"
 	"net"
 	"os"
-	"strconv"
-	"strings"
+	"os/signal"
+
+	"github.com/drewwells/proxy"
 )
-
-const path = "/tmp/proxy.sock"
-
-type Config struct {
-	// Environment variables provided by openconnect
-	IP4InternalAddress string
-	IP4InternalMTU     string
-	VPNFD              uintptr
-	IP4InternalDNS     []string
-	CiscoDefDomain     []string
-	Reason             string
-}
-
-func gatherenv() *Config {
-	cfg := &Config{}
-	cfg.Reason = os.Getenv("reason")
-	cfg.IP4InternalAddress = os.Getenv("INTERNAL_IP4_ADDRESS")
-	cfg.IP4InternalMTU = os.Getenv("INTERNAL_IP4_MTU")
-	domains := os.Getenv("CISCO_DEF_DOMAIN")
-	cfg.CiscoDefDomain = strings.Split(domains, ", ")
-	dnses := os.Getenv("INTERNAL_IP4_DNS") // space sparated values
-	cfg.IP4InternalDNS = strings.Split(dnses, " ")
-
-	svpnfd := os.Getenv("VPNFD")
-	if len(svpnfd) > 0 {
-		ivpnfd, err := strconv.Atoi(svpnfd)
-		if err != nil {
-			log.Fatal("invalid fd", err)
-		}
-		cfg.VPNFD = uintptr(ivpnfd)
-	}
-	return cfg
-}
 
 func main() {
 	log.SetFlags(log.Llongfile)
+
+	cfg := socks.GatherEnv()
+	fmt.Printf("% #v\n", cfg)
+	cfg.VPNFD = 9
+	if cfg.VPNFD == 0 {
+		log.Println("vpnfd missing")
+		for _, env := range os.Environ() {
+			fmt.Println(env)
+		}
+		log.Fatal("")
+	}
+
+	f := os.NewFile(cfg.VPNFD, "mysocket")
+	upstream, err := net.FileConn(f)
+	if err != nil {
+		// log.Fatal(err)
+	}
+
+	if _, err = os.Stat(socks.PATH); err == nil {
+		os.Remove(socks.PATH)
+	}
+
+	defer func() {
+		os.Remove(socks.PATH)
+		fmt.Println("removed", socks.PATH)
+	}()
+
+	l, err := net.Listen("unix", socks.PATH)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
+	go func() {
+		for sig := range c {
+			_ = sig
+			fmt.Println("shutdown requested")
+			l.Close()
+		}
+	}()
+
+	fmt.Println("listening on", socks.PATH)
+	// Start socks proxy server. Accepting incoming requests
+	// to forward to the vpnfd sock
+	serve(upstream, l)
 
 	// in, err := net.Listen("unix", path)
 	// if err != nil {
@@ -57,15 +71,6 @@ func main() {
 	// for _, s := range ss {
 	// 	fmt.Println(s)
 	// }
-	cfg := gatherenv()
-	fmt.Printf("% #v\n", cfg)
-	if cfg.VPNFD > 0 {
-		f := os.NewFile(cfg.VPNFD, "mysocket")
-		conn, err := net.FileConn(f)
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
 
 	// log.Printf("conn % #v\n", conn)
 	// n, err := conn.Write([]byte("HEAD / HTTP/1.0\r\n\r\n"))
@@ -108,4 +113,54 @@ func main() {
 	// fmt.Printf("% #v\n", f)
 	// log.Println("VPNFD:", vpnfd)
 	// log.Fatal(os.Args)
+}
+
+func listenAndWrite(upstream, in net.Conn) {
+	bs := make([]byte, 512)
+	fmt.Println("waiting to read")
+	var readsomething bool
+	for {
+		n, err := in.Read(bs)
+		if err != nil {
+			break
+		}
+		if n > 0 {
+			fmt.Printf("found %d bytes\n", n)
+			fmt.Println(string(bs))
+			readsomething = true
+			_, err := upstream.Write(bs[:n])
+			if err != nil {
+				fmt.Println("error writing to upstream",
+					err)
+			}
+		}
+	}
+	if readsomething {
+		var ups []byte
+		for {
+			n, err := upstream.Read(ups)
+			if err != nil {
+				fmt.Println("error reading from upstream", err)
+				break
+			}
+			if n == 0 {
+				fmt.Println("reading 0 bytes")
+				break
+			}
+			fmt.Printf("reading %d bytes: err\n", n, err)
+		}
+	}
+}
+
+func serve(upstream net.Conn, l net.Listener) {
+	for {
+		fmt.Println("waiting to accept")
+		conn, err := l.Accept()
+		if err != nil {
+			fmt.Println("error accepting conn", err)
+			break
+		}
+		// these leak
+		go listenAndWrite(upstream, conn)
+	}
 }
