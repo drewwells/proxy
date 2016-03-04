@@ -7,8 +7,6 @@ import (
 	"strings"
 )
 
-const path = "/tmp/proxy.sock"
-
 type Config struct {
 	// Environment variables provided by openconnect
 	IP4InternalAddress string

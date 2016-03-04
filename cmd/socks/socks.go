@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/armon/go-socks5"
-	"github.com/drewwells/socks"
+	"github.com/drewwells/proxy"
 	"github.com/hashicorp/hcl"
 	"golang.org/x/net/proxy"
 )
@@ -92,7 +92,8 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println("Listening on", cfg.Listen)
+	fmt.Println("Listening  on", cfg.Listen)
+	fmt.Println("Forwarding to", cfg.Forward)
 	// Create SOCKS5 proxy on localhost port 8000
 	if err := server.ListenAndServe("tcp", cfg.Listen); err != nil {
 		panic(err)
