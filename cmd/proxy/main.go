@@ -5,14 +5,12 @@ import (
 	"log"
 	"net"
 	"os"
-	"os/signal"
 
 	"github.com/drewwells/proxy"
 )
 
 func main() {
 	log.SetFlags(log.Llongfile)
-
 	cfg := socks.GatherEnv()
 	fmt.Printf("% #v\n", cfg)
 	cfg.VPNFD = 9
@@ -27,8 +25,11 @@ func main() {
 	f := os.NewFile(cfg.VPNFD, "mysocket")
 	upstream, err := net.FileConn(f)
 	if err != nil {
-		// log.Fatal(err)
+		log.Fatal(err)
 	}
+
+	fmt.Printf("local % #v\n", upstream.LocalAddr())
+	fmt.Printf("remot % #v\n", upstream.RemoteAddr())
 
 	if _, err = os.Stat(socks.PATH); err == nil {
 		os.Remove(socks.PATH)
@@ -44,75 +45,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt)
-	go func() {
-		for sig := range c {
-			_ = sig
-			fmt.Println("shutdown requested")
-			l.Close()
-		}
-	}()
-
 	fmt.Println("listening on", socks.PATH)
 	// Start socks proxy server. Accepting incoming requests
 	// to forward to the vpnfd sock
 	serve(upstream, l)
 
-	// in, err := net.Listen("unix", path)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// defer fmt.Println("closing socket")
-	// defer in.Close()
-	// fmt.Printf("% #v\n", in)
-
-	// ss := os.Environ()
-	// for _, s := range ss {
-	// 	fmt.Println(s)
-	// }
-
-	// log.Printf("conn % #v\n", conn)
-	// n, err := conn.Write([]byte("HEAD / HTTP/1.0\r\n\r\n"))
-	// log.Println("write", n, err)
-
-	// go func() {
-	// 	for {
-	// 		result, err := ioutil.ReadAll(conn)
-	// 		log.Println("readall", err, result)
-	// 	}
-	// }()
-
-	// laddr, err := net.ResolveUnixAddr("unix", "")
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// raddr, err := net.ResolveUnixAddr("unix", path)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// conn, err := net.DialUnix("unix", laddr, raddr)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-
-	// fmt.Println("getting fd", vpnfd)
-	// f, err := fd.Get(conn, vpnfd, []string{"duh"})
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// fmt.Printf("f[0] % #v\n", f[0])
-	// names, err := f[0].Readdirnames(9)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// fmt.Println("names", names)
-	// _, err = f[0].WriteString("Stuff happening now")
-	// fmt.Println(err)
-	// // f := os.NewFile(vpnfd, "tunfile")
-	// fmt.Printf("% #v\n", f)
-	// log.Println("VPNFD:", vpnfd)
-	// log.Fatal(os.Args)
 }
 
 func listenAndWrite(upstream, in net.Conn) {

@@ -46,12 +46,11 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Println("successfully connected to", env.VPNFD)
-		f.Close()
-		log.Fatal("")
 	}
 
 	if conn != nil {
+		fmt.Println("local", conn.LocalAddr())
+		fmt.Println("remote", conn.RemoteAddr())
 		r.SetConn(conn)
 	} else if strings.HasPrefix(cfg.Forward, "/") {
 		addr := &net.UnixAddr{
