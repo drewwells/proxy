@@ -21,32 +21,6 @@ func (o *Res) dump() {
 	}
 }
 
-func (o *Res) Dialer(n, a string) (net.Conn, error) {
-	// port is bogus from this, lookup the port from the resolver
-	h, notthisport, err := net.SplitHostPort(a)
-	_ = notthisport
-	if err != nil {
-		fmt.Println("failed to split hostport", a)
-	}
-	// Does a lookup locally for the fqdn
-	// names, err := net.LookupAddr(h)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-
-	name := o.Lookup(h)
-	if o.checkName(name) {
-		// return o.conn, nil
-		// fmt.Println("proxy", name+":"+notthisport)
-		return o.forward.Dial(n, name+":"+notthisport)
-	} else {
-		// fmt.Println("direct", name)
-	}
-
-	// Use standard resolver
-	return net.Dial(n, a)
-}
-
 // FileConfig defines the allowed parameters read from a file.
 type FileConfig struct {
 	Forward string   // addr of proxy aware socks5 server
@@ -85,7 +59,7 @@ func (r *Res) Init() {
 	r.cache = make(map[string]struct{})
 	go func() {
 		for {
-			time.Sleep(time.Second * 30)
+			time.Sleep(time.Minute * 5)
 			fmt.Printf("writes: %d\nreads:  %d\n", stored, lookup)
 		}
 	}()
@@ -128,10 +102,10 @@ func ipFromAddr(addr net.Addr) net.IP {
 	}
 }
 
-var empty = net.IP{}
-
-var cMu sync.Mutex
-var counter = net.IP{0, 0, 0, 0}
+var (
+	cMu     sync.Mutex
+	counter = net.IP{0, 0, 0, 0}
+)
 
 func getCounter() net.IP {
 	cMu.Lock()
@@ -150,6 +124,51 @@ func inc() {
 		}
 		counter[i]++
 	}
+}
+
+func (o *Res) negSock(n, host, port string) (net.Conn, error) {
+	log.Fatal("dont do this")
+	fmt.Printf("connecting to sock % #v\n", o.conn)
+	o.conn.Write([]byte("\x05\x00"))
+	bs := make([]byte, 512)
+	go func() {
+		for {
+			fmt.Println("waiting to read")
+			i, err := o.conn.Read(bs)
+			if err != nil {
+				fmt.Println("read err:", err)
+				break
+			}
+			fmt.Println(i, err)
+		}
+		fmt.Println("exited loop")
+	}()
+	return o.conn, nil
+}
+
+func (o *Res) Dialer(n, a string) (net.Conn, error) {
+	// port is bogus from this, lookup the port from the resolver
+	h, port, err := net.SplitHostPort(a)
+	if err != nil {
+		fmt.Println("failed to split hostport", a)
+	}
+	name := o.Lookup(h)
+	// fmt.Println("dialing host", h, "name", name)
+	if o.checkName(name) { // route all traffic right now
+		// return o.negSock(n, name, port)
+		if o.conn != nil {
+			fmt.Println("conn not nil")
+			return o.conn, nil
+		}
+		// fmt.Println("tcp forward")
+		// return o.conn, nil
+		// fmt.Println("proxy", name+":"+notthisport)
+		return o.forward.Dial(n, name+":"+port)
+	}
+	// fmt.Println("direct", name)
+
+	// Use standard resolver
+	return net.Dial(n, a)
 }
 
 func (r *Res) Resolve(name string) (net.IP, error) {
@@ -172,7 +191,7 @@ func (r *Res) Resolve(name string) (net.IP, error) {
 	} else {
 		ip, err = r.def.Resolve(name)
 		if err != nil {
-			log.Println("failed to resolve addr", err)
+			log.Printf("direct resolve failed on %s: %s", name, err)
 		}
 	}
 	addr = &net.TCPAddr{IP: ip}
@@ -181,9 +200,6 @@ func (r *Res) Resolve(name string) (net.IP, error) {
 	// fmt.Println("storing", name, addr)
 	r.names[name] = addr
 	r.mu.Unlock()
-	if err != nil {
-		log.Fatal("error in resolve", err)
-	}
 	return ip, err
 }
 

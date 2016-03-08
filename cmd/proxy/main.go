@@ -2,105 +2,102 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net"
 	"os"
-	"strconv"
-	"strings"
+
+	"github.com/drewwells/proxy"
 )
-
-const path = "/tmp/proxy.sock"
-
-type Config struct {
-	// Environment variables provided by openconnect
-	IP4InternalAddress string
-	IP4InternalMTU     string
-	VPNFD              uintptr
-	IP4InternalDNS     []string
-	CiscoDefDomain     []string
-}
-
-func gatherenv() *Config {
-	cfg := &Config{}
-	cfg.IP4InternalAddress = os.Getenv("INTERNAL_IP4_ADDRESS")
-	cfg.IP4InternalMTU = os.Getenv("INTERNAL_IP4_MTU")
-	domains := os.Getenv("CISCO_DEF_DOMAIN")
-	cfg.CiscoDefDomain = strings.Split(domains, ", ")
-	dnses := os.Getenv("INTERNAL_IP4_DNS") // space sparated values
-	cfg.IP4InternalDNS = strings.Split(dnses, " ")
-
-	svpnfd := os.Getenv("VPNFD")
-	ivpnfd, err := strconv.Atoi(svpnfd)
-	if err != nil {
-		log.Fatal("invalid fd", err)
-	}
-	cfg.VPNFD = uintptr(ivpnfd)
-	return cfg
-}
 
 func main() {
 	log.SetFlags(log.Llongfile)
-
-	// in, err := net.Listen("unix", path)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// defer fmt.Println("closing socket")
-	// defer in.Close()
-	// fmt.Printf("% #v\n", in)
-
-	// ss := os.Environ()
-	// for _, s := range ss {
-	// 	fmt.Println(s)
-	// }
-	cfg := gatherenv()
+	cfg := socks.GatherEnv()
 	fmt.Printf("% #v\n", cfg)
+	cfg.VPNFD = 9
+	if cfg.VPNFD == 0 {
+		log.Println("vpnfd missing")
+		for _, env := range os.Environ() {
+			fmt.Println(env)
+		}
+		log.Fatal("")
+	}
+
 	f := os.NewFile(cfg.VPNFD, "mysocket")
-	conn, err := net.FileConn(f)
+	upstream, err := net.FileConn(f)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	log.Printf("conn % #v\n", conn)
-	n, err := conn.Write([]byte("HEAD / HTTP/1.0\r\n\r\n"))
-	log.Println("write", n, err)
+	fmt.Printf("local % #v\n", upstream.LocalAddr())
+	fmt.Printf("remot % #v\n", upstream.RemoteAddr())
 
-	go func() {
-		for {
-			result, err := ioutil.ReadAll(conn)
-			log.Println("readall", err, result)
-		}
+	if _, err = os.Stat(socks.PATH); err == nil {
+		os.Remove(socks.PATH)
+	}
+
+	defer func() {
+		os.Remove(socks.PATH)
+		fmt.Println("removed", socks.PATH)
 	}()
 
-	// laddr, err := net.ResolveUnixAddr("unix", "")
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// raddr, err := net.ResolveUnixAddr("unix", path)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// conn, err := net.DialUnix("unix", laddr, raddr)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
+	l, err := net.Listen("unix", socks.PATH)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	// fmt.Println("getting fd", vpnfd)
-	// f, err := fd.Get(conn, vpnfd, []string{"duh"})
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// fmt.Printf("f[0] % #v\n", f[0])
-	// names, err := f[0].Readdirnames(9)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// fmt.Println("names", names)
-	// _, err = f[0].WriteString("Stuff happening now")
-	// fmt.Println(err)
-	// // f := os.NewFile(vpnfd, "tunfile")
-	// fmt.Printf("% #v\n", f)
-	// log.Println("VPNFD:", vpnfd)
-	// log.Fatal(os.Args)
+	fmt.Println("listening on", socks.PATH)
+	// Start socks proxy server. Accepting incoming requests
+	// to forward to the vpnfd sock
+	serve(upstream, l)
+
+}
+
+func listenAndWrite(upstream, in net.Conn) {
+	bs := make([]byte, 512)
+	fmt.Println("waiting to read")
+	var readsomething bool
+	for {
+		n, err := in.Read(bs)
+		if err != nil {
+			break
+		}
+		if n > 0 {
+			fmt.Printf("found %d bytes\n", n)
+			fmt.Println(string(bs))
+			readsomething = true
+			_, err := upstream.Write(bs[:n])
+			if err != nil {
+				fmt.Println("error writing to upstream",
+					err)
+			}
+		}
+	}
+	if readsomething {
+		var ups []byte
+		for {
+			n, err := upstream.Read(ups)
+			if err != nil {
+				fmt.Println("error reading from upstream", err)
+				break
+			}
+			if n == 0 {
+				fmt.Println("reading 0 bytes")
+				break
+			}
+			fmt.Printf("reading %d bytes: err\n", n, err)
+		}
+	}
+}
+
+func serve(upstream net.Conn, l net.Listener) {
+	for {
+		fmt.Println("waiting to accept")
+		conn, err := l.Accept()
+		if err != nil {
+			fmt.Println("error accepting conn", err)
+			break
+		}
+		// these leak
+		go listenAndWrite(upstream, conn)
+	}
 }
