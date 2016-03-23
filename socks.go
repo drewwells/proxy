@@ -26,7 +26,7 @@ type FileConfig struct {
 	Forward string   // addr of proxy aware socks5 server
 	Listen  string   // addr to listen on
 	Allow   []string // Slice of patterns to forward
-	// TODO: Disallow []string
+	Block   []string
 }
 
 var _ socks5.NameResolver = &Res{}
@@ -36,14 +36,23 @@ type Res struct {
 	forward proxy.Dialer
 
 	def   socks5.DNSResolver
-	rules []string
 	mu    sync.RWMutex
 	names map[string]net.Addr // host(ip:port) -> fqdn
 	cache map[string]struct{}
+
+	// allow URLs found in whitelist to forward through the proxy
+	whitelist []string
+	// prevent URLs found in black from being forwarded applied only
+	// if found in whitelist
+	blacklist []string
 }
 
-func (r *Res) SetRules(rules []string) {
-	r.rules = rules
+func (r *Res) SetWhitelist(rules []string) {
+	r.whitelist = rules
+}
+
+func (r *Res) SetBlacklist(rules []string) {
+	r.blacklist = rules
 }
 
 func (r *Res) SetConn(c net.Conn) {
@@ -80,12 +89,21 @@ func (r *Res) Lookup(host string) string {
 	return ""
 }
 
+func (r *Res) checkBlack(name string) bool {
+	for _, rule := range r.blacklist {
+		if strings.Contains(name, rule) {
+			return true
+		}
+	}
+	return false
+}
+
 // checknames compares the resolved addresses against the
 // the whitelist of URLs
 func (r *Res) checkName(name string) bool {
-	for _, rule := range r.rules {
+	for _, rule := range r.whitelist {
 		if strings.Contains(name, rule) {
-			return true
+			return !r.checkBlack(name)
 		}
 	}
 	return false

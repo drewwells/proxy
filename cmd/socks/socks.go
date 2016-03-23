@@ -77,7 +77,8 @@ func main() {
 	}
 
 	// r.SetConn(conn)
-	r.SetRules(cfg.Allow)
+	r.SetWhitelist(cfg.Allow)
+	r.SetBlacklist(cfg.Block)
 	r.Init()
 
 	// Create a SOCKS5 server
