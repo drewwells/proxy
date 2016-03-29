@@ -178,14 +178,15 @@ func (o *Res) Dialer(n, a string) (net.Conn, error) {
 			fmt.Println("conn not nil")
 			return o.conn, nil
 		}
-		// fmt.Println("tcp forward")
-		// return o.conn, nil
-		// fmt.Println("proxy", name+":"+notthisport)
-		return o.forward.Dial(n, name+":"+port)
+		uri := name+":"+port
+		conn, err := o.forward.Dial(n, uri)
+		if err == nil {
+			return conn, err
+		}
+		log.Printf("proxy err resolving: %s\n", uri)
+		// Error using proxy, fallback to using default resolver
+		return net.Dial(n, uri)
 	}
-	// fmt.Println("direct", name)
-
-	// Use standard resolver
 	return net.Dial(n, a)
 }
 
